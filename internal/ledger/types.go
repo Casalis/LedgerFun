@@ -1,24 +1,25 @@
 package ledger
 
-import "errors"
+import (
+	"errors"
 
-// Unique id
-type uuid string
+	"github.com/google/uuid"
+)
 
 type Account struct {
-	ID   uuid
+	ID   uuid.UUID
 	Name string
 }
 
 // Represents a single side of a transaction
 type Entry struct {
-	AccountID uuid
+	AccountID uuid.UUID
 	Amount    int64
 }
 
 // Represents a transaction
 type Transaction struct {
-	ID             uuid
+	ID             uuid.UUID
 	IdempotencyKey string
 	Description    string
 	Entries        []Entry
@@ -50,4 +51,8 @@ func (t Transaction) Validate() error {
 	}
 
 	return nil
+}
+
+func (t Transaction) ToString() string {
+	return ""
 }
