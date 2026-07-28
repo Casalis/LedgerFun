@@ -1,6 +1,9 @@
 package ledger
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -55,4 +58,19 @@ func (t Transaction) Validate() error {
 
 func (t Transaction) ToString() string {
 	return ""
+}
+
+func (t Transaction) GetHash() (string, error) {
+
+	// Serialise
+	data, err := json.Marshal(t)
+	if err != nil {
+		return "", err
+	}
+	// Compute hash
+	hash := sha256.Sum256(data)
+
+	// Get Hex string
+	return hex.EncodeToString(hash[:]), nil
+
 }

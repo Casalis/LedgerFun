@@ -2,12 +2,19 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Casalis/LedgerFun/internal/ledger"
+	"github.com/gofor-little/env"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	ErrEnvVarNotSet = errors.New("required environment variables not set")
+	ErrKeyReuse     = errors.New("Transaction kley reused")
 )
 
 type Store struct {
@@ -16,6 +23,21 @@ type Store struct {
 
 func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
+}
+
+func Connect() (*pgxpool.Pool, error) {
+	connString := env.Get("CONNECTION_STRING", "NOT_SET")
+
+	if connString == "NOT_SET" {
+		return nil, ErrEnvVarNotSet
+	}
+	fmt.Printf("Hello world")
+	conn, err := pgxpool.New(context.Background(), connString)
+
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
 
 func (s *Store) CreateAccount(ctx context.Context, name string) (ledger.Account, error) {
