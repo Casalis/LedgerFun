@@ -1,10 +1,12 @@
 package ledger
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/google/uuid"
 )
@@ -34,6 +36,14 @@ var (
 	ErrUnbalanced    = errors.New("entries must sum to zero")
 )
 
+func NewTransaction(description string, entries []Entry) (Transaction, error) {
+	var t Transaction
+	t.Description = description
+	t.IdempotencyKey = uuid.NewString()
+	t.Entries = entries
+	return t, t.Validate()
+}
+
 func (t Transaction) Validate() error {
 	// Validate entry count
 	if len(t.Entries) < 2 {
@@ -62,8 +72,25 @@ func (t Transaction) ToString() string {
 
 func (t Transaction) GetHash() (string, error) {
 
-	// Serialise
-	data, err := json.Marshal(t)
+	// Sort a copy of the entries so hash equality doesn't depend on the
+	// order rows come back from the database (row order isn't guaranteed
+	// to match insertion order since ids are random UUIDs).
+	entries := slices.Clone(t.Entries)
+	slices.SortFunc(entries, func(a, b Entry) int {
+		if c := cmp.Compare(a.AccountID.String(), b.AccountID.String()); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Amount, b.Amount)
+	})
+
+	// Serialise only the caller-supplied fields - ID is assigned by the
+	// store on insert, so including it would make a genuine replay of the
+	// same request hash differently from the stored copy.
+	data, err := json.Marshal(struct {
+		IdempotencyKey string
+		Description    string
+		Entries        []Entry
+	}{t.IdempotencyKey, t.Description, entries})
 	if err != nil {
 		return "", err
 	}

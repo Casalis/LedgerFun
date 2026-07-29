@@ -26,8 +26,17 @@ func setup() (store *Store) {
 
 }
 
-func teardown() {
-	//
+// cleanDB removes all transactions and entries so tests don't observe
+// state left over from previous runs. Accounts are left in place since
+// MakeAccount looks them up by name and reuses them.
+func cleanDB(s *Store) {
+	ctx := context.Background()
+	if _, err := s.pool.Exec(ctx, "DELETE FROM entries"); err != nil {
+		panic(err)
+	}
+	if _, err := s.pool.Exec(ctx, "DELETE FROM transactions"); err != nil {
+		panic(err)
+	}
 }
 
 func MakeAccount(s *Store, accountName string) ledger.Account {
@@ -48,6 +57,8 @@ func TestIdempotency(t *testing.T) {
 	if s == nil {
 		t.Fatal("setup returned nil store")
 	}
+	cleanDB(s)
+	t.Cleanup(func() { cleanDB(s) })
 
 	var accNameA string = "Account A"
 	var accNameB string = "Account B"
@@ -55,9 +66,6 @@ func TestIdempotency(t *testing.T) {
 	accA := MakeAccount(s, accNameA)
 	accB := MakeAccount(s, accNameB)
 
-	// Need to create a create transaction func
-	var newTransaction ledger.Transaction
-	newTransaction.Description = "Bills"
 	// Create valid entries
 	var entry1 ledger.Entry
 	entry1.AccountID = accA.ID
@@ -65,13 +73,8 @@ func TestIdempotency(t *testing.T) {
 	var entry2 ledger.Entry
 	entry2.AccountID = accB.ID
 	entry2.Amount = -100
-	newTransaction.Entries = []ledger.Entry{entry1, entry2}
 
-	var err error
-	newTransaction.IdempotencyKey, err = newTransaction.GetHash()
-	if err != nil {
-		panic(err)
-	}
+	newTransaction, err := ledger.NewTransaction("Test Transaction", []ledger.Entry{entry1, entry2})
 
 	ctx := context.Background()
 
@@ -104,24 +107,51 @@ func TestIdempotency(t *testing.T) {
 		t.Fatalf("account B balance = %d, want %d", balanceBAfterFirst, balanceBBefore+entry2.Amount)
 	}
 
-	// Re-posting the identical transaction hashes to the same idempotency key
-	// and must be rejected, without moving the balances a second time.
-	if _, err := s.PostTransaction(ctx, newTransaction); err == nil {
-		t.Fatal("second PostTransaction with reused idempotency key succeeded, want error")
+	// Re-posting the exact same transaction (same idempotency key, same body)
+	// is a legitimate replay: it must succeed and must not move the
+	// balances a second time.
+	if _, err := s.PostTransaction(ctx, newTransaction); err != nil {
+		t.Fatalf("replayed PostTransaction failed, want success: %v", err)
 	}
 
-	balanceAAfterSecond, err := s.GetBalance(ctx, accA.ID)
+	balanceAAfterReplay, err := s.GetBalance(ctx, accA.ID)
 	if err != nil {
-		t.Fatalf("failed to get balance for account A after second post: %v", err)
+		t.Fatalf("failed to get balance for account A after replay: %v", err)
 	}
-	if balanceAAfterSecond != balanceAAfterFirst {
-		t.Fatalf("account A balance changed on rejected repost: got %d, want %d", balanceAAfterSecond, balanceAAfterFirst)
+	if balanceAAfterReplay != balanceAAfterFirst {
+		t.Fatalf("account A balance changed on replay: got %d, want %d", balanceAAfterReplay, balanceAAfterFirst)
 	}
-	balanceBAfterSecond, err := s.GetBalance(ctx, accB.ID)
+	balanceBAfterReplay, err := s.GetBalance(ctx, accB.ID)
 	if err != nil {
-		t.Fatalf("failed to get balance for account B after second post: %v", err)
+		t.Fatalf("failed to get balance for account B after replay: %v", err)
 	}
-	if balanceBAfterSecond != balanceBAfterFirst {
-		t.Fatalf("account B balance changed on rejected repost: got %d, want %d", balanceBAfterSecond, balanceBAfterFirst)
+	if balanceBAfterReplay != balanceBAfterFirst {
+		t.Fatalf("account B balance changed on replay: got %d, want %d", balanceBAfterReplay, balanceBAfterFirst)
+	}
+
+	// Reusing the same key with a different body must be rejected.
+	conflicting, err := ledger.NewTransaction("Different body", []ledger.Entry{entry1, entry2})
+	if err != nil {
+		t.Fatalf("failed to build conflicting transaction: %v", err)
+	}
+	conflicting.IdempotencyKey = newTransaction.IdempotencyKey
+
+	if _, err := s.PostTransaction(ctx, conflicting); err == nil {
+		t.Fatal("PostTransaction with reused key and different body succeeded, want error")
+	}
+
+	balanceAAfterConflict, err := s.GetBalance(ctx, accA.ID)
+	if err != nil {
+		t.Fatalf("failed to get balance for account A after conflict: %v", err)
+	}
+	if balanceAAfterConflict != balanceAAfterFirst {
+		t.Fatalf("account A balance changed on rejected conflict: got %d, want %d", balanceAAfterConflict, balanceAAfterFirst)
+	}
+	balanceBAfterConflict, err := s.GetBalance(ctx, accB.ID)
+	if err != nil {
+		t.Fatalf("failed to get balance for account B after conflict: %v", err)
+	}
+	if balanceBAfterConflict != balanceBAfterFirst {
+		t.Fatalf("account B balance changed on rejected conflict: got %d, want %d", balanceBAfterConflict, balanceBAfterFirst)
 	}
 }
