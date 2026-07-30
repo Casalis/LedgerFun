@@ -76,7 +76,10 @@ func (s *Store) GetAccountByName(ctx context.Context, name string) (ledger.Accou
 
 func (s *Store) PostTransaction(ctx context.Context, tx ledger.Transaction) (ledger.Transaction, error) {
 	// This transaction will be populated with the succesfully submited data
-	var t ledger.Transaction
+	t := ledger.Transaction{
+		IdempotencyKey: tx.IdempotencyKey,
+		Description:    tx.Description,
+	}
 
 	err := tx.Validate()
 	if err != nil {
@@ -141,6 +144,54 @@ func (s *Store) GetBalance(ctx context.Context, accountId uuid.UUID) (int64, err
 
 }
 
+// entriesForTransaction returns the entries belonging to a transaction, in
+// insertion order.
+func (s *Store) entriesForTransaction(ctx context.Context, transactionID uuid.UUID) ([]ledger.Entry, error) {
+	r, err := s.pool.Query(ctx, "SELECT account_id, amount FROM entries WHERE transaction_id = $1 ORDER BY id", transactionID)
+	if err != nil {
+		return nil, err
+	}
+	var entries []ledger.Entry
+	var ea uuid.UUID
+	var am int64
+	_, err = pgx.ForEachRow(r, []any{&ea, &am}, func() error {
+		entries = append(entries, ledger.Entry{AccountID: ea, Amount: am})
+		return nil
+	})
+	return entries, err
+}
+
+func (s *Store) GetTransaction(ctx context.Context, id uuid.UUID) (ledger.Transaction, error) {
+	var t ledger.Transaction
+	row := s.pool.QueryRow(ctx, "SELECT id, idempotency_key, description FROM transactions WHERE id = $1", id)
+	if err := row.Scan(&t.ID, &t.IdempotencyKey, &t.Description); err != nil {
+		return t, err
+	}
+
+	entries, err := s.entriesForTransaction(ctx, t.ID)
+	if err != nil {
+		return t, err
+	}
+	t.Entries = entries
+
+	return t, nil
+}
+
+func (s *Store) ListEntries(ctx context.Context, accountID uuid.UUID) ([]ledger.Entry, error) {
+	r, err := s.pool.Query(ctx, "SELECT account_id, amount FROM entries WHERE account_id = $1 ORDER BY id", accountID)
+	if err != nil {
+		return nil, err
+	}
+	var entries []ledger.Entry
+	var ea uuid.UUID
+	var am int64
+	_, err = pgx.ForEachRow(r, []any{&ea, &am}, func() error {
+		entries = append(entries, ledger.Entry{AccountID: ea, Amount: am})
+		return nil
+	})
+	return entries, err
+}
+
 func (s *Store) HandleIdempotency(ctx context.Context, tx ledger.Transaction) (ledger.Transaction, error) {
 	// We need to determine what type of idempotency problem this is
 
@@ -152,20 +203,7 @@ func (s *Store) HandleIdempotency(ctx context.Context, tx ledger.Transaction) (l
 		return te, err
 	}
 
-	r, err := s.pool.Query(ctx, "SELECT account_id, amount FROM entries WHERE transaction_id = $1 ORDER BY id", te.ID)
-	if err != nil {
-		return te, err
-	}
-	var entries []ledger.Entry
-	var ea uuid.UUID
-	var am int64
-	_, err = pgx.ForEachRow(r, []any{&ea, &am}, func() error {
-		var newEntry ledger.Entry
-		newEntry.AccountID = ea
-		newEntry.Amount = am
-		entries = append(entries, newEntry)
-		return nil
-	})
+	entries, err := s.entriesForTransaction(ctx, te.ID)
 	if err != nil {
 		return te, err
 	}

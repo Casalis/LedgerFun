@@ -12,22 +12,22 @@ import (
 )
 
 type Account struct {
-	ID   uuid.UUID
-	Name string
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
 }
 
 // Represents a single side of a transaction
 type Entry struct {
-	AccountID uuid.UUID
-	Amount    int64
+	AccountID uuid.UUID `json:"account_id"`
+	Amount    int64     `json:"amount"`
 }
 
 // Represents a transaction
 type Transaction struct {
-	ID             uuid.UUID
-	IdempotencyKey string
-	Description    string
-	Entries        []Entry
+	ID             uuid.UUID `json:"id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	Description    string    `json:"description"`
+	Entries        []Entry   `json:"entries"`
 }
 
 var (
