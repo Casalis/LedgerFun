@@ -3,7 +3,7 @@
 A double-entry ledger service, written in Go against Postgres, built as an evenings-and-weekends
 project to actually *learn* Go rather than read about it. I'd used Go a little before, but wanted
 something meaty enough to hit real problems - database transactions, concurrency, idempotency -
-instead of another to-do app.
+instead of another todo app.
 
 Why a ledger? Because "money must always balance" is a genuinely fun invariant to enforce in code,
 and it's a small enough domain that I can take it seriously: correct on paper, then correct under
@@ -34,7 +34,7 @@ This is in progress and I'd rather the README say so honestly than oversell it.
       original result with no side effects, while reusing a key with a *different* body is
       rejected. This turned out to be the most interesting bug-hunt in the project so far, see
       below.
-- [ ] HTTP API
+- [x] **HTTP API** - a thin `net/http` layer over the store (`internal/api`), see below
 - [ ] Concurrency safety under load (row locking, proven with a goroutine stress test)
 - [ ] Logging, metrics, deploy
 
@@ -54,6 +54,41 @@ order coming back from Postgres (which isn't guaranteed to match insertion order
 result. A good reminder that a green test tells you your assertions passed, not that they were the
 right assertions.
 
+## The API
+
+A small `net/http` layer (Go 1.22+ pattern routing, no framework) sits over the store. Handlers
+decode JSON, call the store, encode JSON back - the validation and idempotency logic all lives one
+layer down, so the HTTP layer stays thin.
+
+| Method | Path                       | Does                                    |
+|--------|----------------------------|------------------------------------------|
+| GET    | `/healthz`                 | liveness check                           |
+| POST   | `/v1/accounts`              | create an account                        |
+| GET    | `/v1/accounts/{id}`         | fetch an account                         |
+| GET    | `/v1/accounts/{id}/balance` | current balance                          |
+| GET    | `/v1/accounts/{id}/entries` | entries posted against an account        |
+| POST   | `/v1/transactions`          | post a (validated, idempotent) transaction |
+| GET    | `/v1/transactions/{id}`     | fetch a transaction and its entries      |
+
+```bash
+alice=$(curl -s -X POST localhost:8080/v1/accounts -d '{"name":"Alice"}' | jq -r .id)
+bob=$(curl -s -X POST localhost:8080/v1/accounts -d '{"name":"Bob"}'   | jq -r .id)
+
+curl -s -X POST localhost:8080/v1/transactions -d '{
+  "description": "Coffee",
+  "entries": [
+    {"account_id": "'"$alice"'", "amount": -350},
+    {"account_id": "'"$bob"'",   "amount": 350}
+  ]
+}'
+
+curl -s localhost:8080/v1/accounts/$alice/balance
+```
+
+Errors are plain JSON (`{"error": "..."}`) with the status code doing the real work: `400` for
+invalid input, `404` for a missing account/transaction, `409` for reusing an idempotency key with
+a different body.
+
 ## Running it locally
 
 ```bash
@@ -67,11 +102,15 @@ go run ./cmd/ledgerd
 go test ./...
 ```
 
+Tests in `internal/store` and `internal/api` run against a real Postgres instance rather than a
+mock - the interesting bugs in this project (see below) were the kind that only show up against
+the real thing.
+
 ## What's next
 
-Roughly in order: an HTTP layer over the existing store, a concurrency test (many goroutines
-posting against the same accounts, proving the balance stays exact under a race), then logging,
-containerising, and a small deployed instance to link here.
+A concurrency test next: many goroutines posting against the same two accounts, proving the
+balance stays exact under a race (and adding row locking when it inevitably doesn't, at first).
+After that: logging, containerising, and a small deployed instance to link here.
 
 ## Design notes for the curious
 
