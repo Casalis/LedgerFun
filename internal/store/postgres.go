@@ -33,7 +33,6 @@ func Connect() (*pgxpool.Pool, error) {
 	if connString == "NOT_SET" {
 		return nil, ErrEnvVarNotSet
 	}
-	fmt.Printf("Hello world")
 	conn, err := pgxpool.New(context.Background(), connString)
 
 	if err != nil {

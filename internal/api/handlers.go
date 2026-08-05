@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/Casalis/LedgerFun/internal/ledger"
@@ -45,6 +46,8 @@ type createAccountRequest struct {
 
 func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	var req createAccountRequest
+	slog.Info("CreateAccount request")
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -64,6 +67,8 @@ func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetAccount(w http.ResponseWriter, r *http.Request) {
+	slog.Info("GetAccount request")
+
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid account id")
@@ -85,6 +90,7 @@ type balanceResponse struct {
 }
 
 func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
+	slog.Info("GetBalance request")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid account id")
@@ -107,6 +113,7 @@ func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListEntries(w http.ResponseWriter, r *http.Request) {
+	slog.Info("ListEntries request")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid account id")
@@ -134,6 +141,7 @@ type postTransactionRequest struct {
 }
 
 func (h *Handler) PostTransaction(w http.ResponseWriter, r *http.Request) {
+	slog.Info("PostTransaction request")
 	var req postTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -167,6 +175,7 @@ func (h *Handler) PostTransaction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
+	slog.Info("GetTransaction request")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid transaction id")
@@ -189,6 +198,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
+	slog.Error("string")
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
