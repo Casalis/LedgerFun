@@ -35,7 +35,7 @@ This is in progress and I'd rather the README say so honestly than oversell it.
       rejected. This turned out to be the most interesting bug-hunt in the project so far, see
       below.
 - [x] **HTTP API** - a thin `net/http` layer over the store (`internal/api`), see below
-- [ ] Concurrency safety under load (row locking, proven with a goroutine stress test)
+- [x] **Concurrency safety under load** - proven with goroutine stress tests, see below
 - [ ] Logging, metrics, deploy
 
 ## Future stretch plans
@@ -53,6 +53,35 @@ Fixed by hashing only the caller-supplied fields, and sorting entries before has
 order coming back from Postgres (which isn't guaranteed to match insertion order) can't change the
 result. A good reminder that a green test tells you your assertions passed, not that they were the
 right assertions.
+
+## Concurrency: safe by design, not by locking
+
+The obvious way to break a ledger under load is the classic lost-update race: two requests read a
+balance, both compute a new value off the same stale read, and one write clobbers the other. That
+race needs a *read-modify-write* on some shared row - a cached `balance` column being the usual
+culprit.
+
+This store doesn't have one. `entries` is append-only and `GetBalance` derives the result with
+`SUM(amount)` over committed rows. `PostTransaction` never reads an account's current state before
+writing - it only ever inserts new, independent entry rows. Postgres's MVCC handles concurrent
+inserts into the same table without any explicit locking, so there's nothing to race on. No
+`SELECT ... FOR UPDATE`, no lock ordering, no deadlock risk - the invariant holds structurally. If
+a cached balance column is ever introduced for performance, this stops being true and row locking
+would need to be added at that point.
+
+Two tests in `internal/store/postgres_test.go` prove this rather than just asserting it:
+
+- `TestConcurrentPosting` - ~100 goroutines post distinct transfers between the same two accounts
+  concurrently; asserts the final balances are exactly right and `SUM(amount)` over every entry in
+  the database is still zero.
+- `TestConcurrentIdempotentReplay` - ~20 goroutines post the *same* idempotency key concurrently;
+  asserts exactly one transaction row lands and the transfer applies once, not zero or many times.
+
+Both pass reliably under `go test -race -count=5 ./internal/store/...`. Getting there also
+surfaced a real bug that had nothing to do with the ledger logic: `setup()` opened a fresh
+`pgxpool.Pool` per test with nothing ever closing it, so repeated/`-count`-ed runs leaked
+connections until Postgres started refusing new ones (`sorry, too many clients already`) -
+fixed with `t.Cleanup(func() { s.pool.Close() })` in each test.
 
 ## The API
 
@@ -108,9 +137,8 @@ the real thing.
 
 ## What's next
 
-A concurrency test next: many goroutines posting against the same two accounts, proving the
-balance stays exact under a race (and adding row locking when it inevitably doesn't, at first).
-After that: logging, containerising, and a small deployed instance to link here.
+- Improved Logging, metrics, containerising, and a small deployed instance to link here.
+- Fake "Banking app" client to create accounts and peform transactions. Have bots perform transactions between each other 24/7.
 
 ## Design notes for the curious
 
